@@ -1,0 +1,227 @@
+
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+  <meta charset="UTF-8">
+  <title>Lista de Ocorrências com Controle</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      background: #f1f5f9;
+      margin: 0;
+    }
+    header {
+      background-color: #003c70;
+      color: white;
+      padding: 20px;
+      text-align: center;
+    }
+    .container {
+      max-width: 960px;
+      margin: auto;
+      padding: 20px;
+      background: white;
+    }
+    .top-bar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      margin-bottom: 20px;
+    }
+    .top-bar input {
+      padding: 10px;
+      width: 100%;
+      margin: 10px 0;
+    }
+    .ocorrencia {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      background: #f9f9f9;
+      padding: 12px;
+      border-left: 5px solid #0078D4;
+      margin-bottom: 12px;
+      border-radius: 6px;
+    }
+    .info {
+      flex: 1;
+    }
+    .actions {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-end;
+    }
+    .btn {
+      padding: 6px 12px;
+      border: none;
+      border-radius: 4px;
+      margin-top: 4px;
+      cursor: pointer;
+      font-size: 13px;
+    }
+    .btn-pdf { background: #28a745; color: white; }
+    .btn-del { background: #dc3545; color: white; }
+    .btn-bulk { background: #6c757d; color: white; margin-right: 10px; }
+    .checkbox { margin-right: 10px; }
+    .summary { font-weight: bold; margin: 10px 0; }
+    canvas { background: #fff; border: 1px solid #ccc; margin-top: 20px; }
+  </style>
+</head>
+<body>
+  <header>Gestão de Ocorrências</header>
+  <div class="container">
+    <div class="top-bar">
+      <input type="text" id="filtro" placeholder="Filtrar por nome do aluno..." />
+      <div>
+        <button class="btn btn-bulk" onclick="selecionarTudo()">Selecionar tudo</button>
+        <button class="btn btn-bulk" onclick="excluirSelecionados()">Excluir selecionados</button>
+      </div>
+    </div>
+    <div class="summary" id="resumo">Total: 0 ocorrências | 0 alunos únicos | 0 selecionadas</div>
+    <div id="listaOcorrencias">Carregando...</div>
+    <canvas id="grafico" width="920" height="300"></canvas>
+  </div>
+
+  <!-- Scripts corretos -->
+  <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-firestore-compat.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+  <script>
+    const firebaseConfig = {
+      apiKey: "AIzaSyDBe67kG6oru6nUMTrazQFDeMlZWrWZbzY",
+      authDomain: "registro-ocorrencia.firebaseapp.com",
+      projectId: "registro-ocorrencia"
+    };
+    firebase.initializeApp(firebaseConfig);
+    const db = firebase.firestore();
+
+    let todas = [];
+todasOriginais = [];
+let todasOriginais = [];
+    let selecionadas = new Set();
+
+    window.onload = async function () {
+      const container = document.getElementById("listaOcorrencias");
+      const resumo = document.getElementById("resumo");
+      const snapshot = await db.collection("ocorrencias").orderBy("dataHora", "desc").get();
+      container.innerHTML = "";
+      todas = [];
+todasOriginais = [];
+
+      const alunoContador = {};
+
+      snapshot.forEach(doc => {
+        const data = doc.data();
+        data.id = doc.id;
+        todas.push(data);
+todasOriginais.push(data);
+        alunoContador[data.nomeAluno] = (alunoContador[data.nomeAluno] || 0) + 1;
+
+        const div = document.createElement("div");
+        div.className = "ocorrencia";
+        div.innerHTML = `
+          <div class="checkbox"><input type="checkbox" onchange="toggleSelecionado('${data.id}')" id="check_${data.id}"></div>
+          <div class="info">
+            <strong>${data.nomeAluno}</strong> - ${data.serie} - ${data.professor}<br/>
+            <small>${data.dataHora}</small><br/>
+            <small>${data.ocorrencias.join(", ")}</small><br/>
+            <small>${data.descricao}</small>
+          </div>
+          <div class="actions">
+            <button class="btn btn-pdf" onclick="gerarPDF('${data.nomeAluno}', '${data.serie}', '${data.professor}', '${data.dataHora}', \`${data.ocorrencias.join(", ")}\`, \`${data.descricao}\`)">PDF</button>
+            <button class="btn btn-del" onclick="excluir('${data.id}')">Excluir</button>
+          </div>
+        `;
+        container.appendChild(div);
+      });
+
+      atualizarResumo();
+      gerarGrafico(alunoContador);
+    };
+
+    function toggleSelecionado(id) {
+      if (selecionadas.has(id)) {
+        selecionadas.delete(id);
+      } else {
+        selecionadas.add(id);
+      }
+      atualizarResumo();
+    }
+
+    function selecionarTudo() {
+      todas.forEach(o => {
+        selecionadas.add(o.id);
+        document.getElementById("check_" + o.id).checked = true;
+      });
+      atualizarResumo();
+    }
+
+    async function excluirSelecionados() {
+      if (confirm("Deseja excluir todas as selecionadas?")) {
+        for (let id of selecionadas) {
+          await db.collection("ocorrencias").doc(id).delete();
+        }
+        location.reload();
+      }
+    }
+
+    async function excluir(id) {
+      if (confirm("Excluir esta ocorrência?")) {
+        await db.collection("ocorrencias").doc(id).delete();
+        location.reload();
+      }
+    }
+
+    function atualizarResumo() {
+      const alunos = new Set(todas.map(o => o.nomeAluno));
+      document.getElementById("resumo").textContent =
+        `Total: ${todas.length} ocorrências | ${alunos.size} alunos únicos | ${selecionadas.size} selecionadas`;
+    }
+
+    function gerarPDF(nome, serie, professor, data, ocorrencias, descricao) {
+      const { jsPDF } = window.jspdf;
+      const doc = new jsPDF();
+      doc.setFontSize(14);
+      doc.text(`Registro de Ocorrência`, 20, 20);
+      doc.setFontSize(12);
+      doc.text(`Aluno: ${nome}`, 20, 30);
+      doc.text(`Série: ${serie}`, 20, 40);
+      doc.text(`Professor: ${professor}`, 20, 50);
+      doc.text(`Data: ${data}`, 20, 60);
+      doc.text(`Ocorrências: ${ocorrencias}`, 20, 70);
+      doc.text(`Descrição:`, 20, 80);
+      doc.text(`${descricao}`, 20, 90);
+      doc.save(`Ocorrencia_${nome}.pdf`);
+    }
+
+    function gerarGrafico(dados) {
+      const ctx = document.getElementById("grafico").getContext("2d");
+      new Chart(ctx, {
+        type: "bar",
+        data: {
+          labels: Object.keys(dados),
+          datasets: [{
+            label: "Ocorrências por Aluno",
+            data: Object.values(dados),
+            backgroundColor: "#0078D4"
+          }]
+        },
+        options: {
+          responsive: true,
+          plugins: {
+            legend: { display: false }
+          },
+          scales: {
+            x: { title: { display: true, text: "Alunos" } },
+            y: { title: { display: true, text: "Ocorrências" }, beginAtZero: true }
+          }
+        }
+      });
+    }
+  </script>
+</body>
+</html>
